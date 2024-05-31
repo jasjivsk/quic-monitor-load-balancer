@@ -10,6 +10,9 @@ import (
 	"log"
 	"math/big"
 	"os"
+	"time"
+
+	"github.com/golang-jwt/jwt/v4"
 )
 
 func BuildTLSClientConfig() *tls.Config {
@@ -70,4 +73,46 @@ func GenerateTLSConfig() (*tls.Config, error) {
 		Certificates: []tls.Certificate{tlsCert},
 		NextProtos:   []string{"quic-echo-example"},
 	}, nil
+}
+
+func GenerateJWT(clientID string) string {
+	// Create a new JWT token with the client ID as a claim
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"client_id": clientID,
+		"exp":       time.Now().Add(time.Hour * 24).Unix(),
+	})
+
+	// Sign the token with a secret key (replace with your own secret)
+	secretKey := []byte("your_secret_key")
+	tokenString, err := token.SignedString(secretKey)
+	if err != nil {
+		log.Printf("Error generating JWT: %v", err)
+		return ""
+	}
+
+	return tokenString
+}
+
+func VerifyJWT(tokenString string) (string, error) {
+	// Parse the JWT token
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		// Verify the signing method and return the secret key
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		secretKey := []byte("your_secret_key")
+		return secretKey, nil
+	})
+
+	if err != nil {
+		return "", err
+	}
+
+	// Extract the client ID from the token claims
+	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+		clientID := claims["client_id"].(string)
+		return clientID, nil
+	}
+
+	return "", fmt.Errorf("invalid JWT token")
 }

@@ -3,8 +3,11 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"log"
+	"math/rand"
+	"time"
 
 	"drexel.edu/net-quic/pkg/pdu"
 	"drexel.edu/net-quic/pkg/util"
@@ -104,14 +107,110 @@ func (s *Server) protocolHandler(stream quic.Stream) error {
 	log.Printf("[server] Data In: [%s] %s",
 		data.GetTypeAsString(), string(data.Data))
 
-	//Now lets echo it back
+	switch data.Mtype {
+	case pdu.TYPE_HELLO:
+		// Process HELLO message and send ACK
+		var hello struct {
+			SupportedMetrics []string `json:"supported_metrics"`
+			CheckInterval    int      `json:"check_interval"`
+			AuthToken        string   `json:"auth_token"`
+			Version          float64  `json:"version"`
+		}
+		json.Unmarshal(data.Data, &hello)
+		// Verify JWT token
+		serverID, _ := util.VerifyJWT(hello.AuthToken)
+		// Send ACK
+		ackData := map[string]interface{}{
+			"confirmed_metrics": hello.SupportedMetrics,
+			"check_interval":    hello.CheckInterval,
+			"server_id":         serverID,
+		}
+		ackBytes, _ := json.Marshal(ackData)
+		ackPdu := pdu.PDU{
+			Mtype:  pdu.TYPE_ACK,
+			Length: uint16(len(ackBytes)),
+			Data:   ackBytes,
+		}
+		ackBytes, _ = pdu.PduToBytes(&ackPdu)
+		stream.Write(ackBytes)
+
+	case pdu.TYPE_HEALTH_REQUEST:
+		// Send current health metrics
+		healthData := s.getHealthData()
+		rspPdu := pdu.PDU{
+			Mtype:  pdu.TYPE_HEALTH_RESPONSE,
+			Length: uint16(len(healthData)),
+			Data:   healthData,
+		}
+		rspBytes, _ := pdu.PduToBytes(&rspPdu)
+		stream.Write(rspBytes)
+
+	case pdu.TYPE_CONFIG_UPDATE:
+		// Update health check configuration
+		var configUpdate struct {
+			NewMetrics       []string `json:"new_metrics"`
+			NewCheckInterval int      `json:"new_check_interval"`
+		}
+		json.Unmarshal(data.Data, &configUpdate)
+		s.updateHealthCheckConfig(configUpdate.NewMetrics, configUpdate.NewCheckInterval)
+		// Send CONFIG_ACK
+		ackData := map[string]interface{}{
+			"update_status": "success",
+			"message":       "Configuration updated successfully.",
+		}
+		ackBytes, _ := json.Marshal(ackData)
+		ackPdu := pdu.PDU{
+			Mtype:  pdu.TYPE_CONFIG_ACK,
+			Length: uint16(len(ackBytes)),
+			Data:   ackBytes,
+		}
+		ackBytes, _ = pdu.PduToBytes(&ackPdu)
+		stream.Write(ackBytes)
+
+	case pdu.TYPE_TERMINATE:
+		// Acknowledge termination and close the stream
+		ackData := map[string]interface{}{
+			"message": "Session terminated successfully.",
+		}
+		ackBytes, _ := json.Marshal(ackData)
+		ackPdu := pdu.PDU{
+			Mtype:  pdu.TYPE_TERMINATE_ACK,
+			Length: uint16(len(ackBytes)),
+			Data:   ackBytes,
+		}
+		ackBytes, _ = pdu.PduToBytes(&ackPdu)
+		stream.Write(ackBytes)
+		return nil
+
+	default:
+		// Handle unknown message types
+		errorData := map[string]interface{}{
+			"error_code":    404,
+			"error_message": "Unknown message type.",
+		}
+		errorBytes, _ := json.Marshal(errorData)
+		errorPdu := pdu.PDU{
+			Mtype:  pdu.TYPE_ERROR,
+			Length: uint16(len(errorBytes)),
+			Data:   errorBytes,
+		}
+		errorBytes, _ = pdu.PduToBytes(&errorPdu)
+		_, err = stream.Write(errorBytes)
+		if err != nil {
+			log.Printf("[server] Error sending error response: %s", err)
+			return err
+		}
+		return nil
+	}
+
+	// Now lets echo it back
 	rspMsg := fmt.Sprintf("ack: FromServer Echo-%s",
 		string(data.Data))
 
 	rspPdu := pdu.PDU{
-		Mtype: pdu.TYPE_DATA | pdu.TYPE_ACK,
-		Len:   uint32(len(rspMsg)),
-		Data:  []byte(rspMsg),
+		Mtype:  pdu.TYPE_DATA | pdu.TYPE_ACK,
+		Length: uint16(len(rspMsg)),
+		Data:   []byte(rspMsg),
 	}
 
 	fmt.Printf("Server-> %v", rspPdu)
@@ -128,4 +227,28 @@ func (s *Server) protocolHandler(stream quic.Stream) error {
 		return err
 	}
 	return nil
+}
+
+func (s *Server) getHealthData() []byte {
+	// Simulate collecting current health metrics
+	cpuLoad := rand.Float64() * 100
+	memUsage := rand.Float64() * 100
+	respTime := rand.Float64() * 1000
+
+	healthData := map[string]interface{}{
+		"timestamp": time.Now().Format(time.RFC3339),
+		"metrics": map[string]float64{
+			"cpu_load":      cpuLoad,
+			"memory_usage":  memUsage,
+			"response_time": respTime,
+		},
+	}
+	jsonData, _ := json.Marshal(healthData)
+	return jsonData
+}
+
+func (s *Server) updateHealthCheckConfig(newMetrics []string, newCheckInterval int) {
+	// Update health check configuration (not implemented in this example)
+	log.Printf("[server] Updated health check configuration: metrics=%v, interval=%d",
+		newMetrics, newCheckInterval)
 }

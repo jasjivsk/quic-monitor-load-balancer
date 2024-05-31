@@ -65,21 +65,7 @@ func (c *Client) protocolHandler() error {
 		return err
 	}
 
-	req := pdu.NewPDU(pdu.TYPE_DATA, []byte("hello from client"))
-	pduBytes, err := pdu.PduToBytes(req)
-	if err != nil {
-		log.Printf("[cli] error making pdu byte array %s", err)
-		return err
-	}
-
-	n, err := stream.Write(pduBytes)
-	if err != nil {
-		log.Printf("[cli] error writing to stream %s", err)
-		return err
-	}
-	log.Printf("[cli] wrote %d bytes to stream", n)
-
-	// Send HELLO message with initial check parameters
+	// Send HELLO PDU
 	helloData := map[string]interface{}{
 		"supported_metrics": []string{"cpu_load", "memory_usage", "response_time"},
 		"check_interval":    5,
@@ -92,8 +78,13 @@ func (c *Client) protocolHandler() error {
 		Length: uint16(len(helloBytes)),
 		Data:   helloBytes,
 	}
-	pduBytes, _ = pdu.PduToBytes(&helloPdu)
-	stream.Write(pduBytes)
+	pduBytes, _ := pdu.PduToBytes(&helloPdu)
+	n, err := stream.Write(pduBytes)
+	if err != nil {
+		log.Printf("[cli] error writing to stream %s", err)
+		return err
+	}
+	log.Printf("[cli] wrote %d bytes to stream", n)
 
 	// Periodically send health check requests
 	ticker := time.NewTicker(time.Duration(helloData["check_interval"].(int)) * time.Second)

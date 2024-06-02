@@ -23,6 +23,7 @@ type LoadBalancerConfig struct {
 	ReconnectInterval int
 	Port              int
 }
+
 type LoadBalancer struct {
 	cfg                LoadBalancerConfig
 	tls                *tls.Config
@@ -31,6 +32,7 @@ type LoadBalancer struct {
 	serverFailureCount map[string]int
 	mu                 sync.Mutex
 }
+
 type ServerHealth struct {
 	ServerID        string
 	IsHealthy       bool
@@ -59,11 +61,13 @@ func NewLoadBalancer(cfg LoadBalancerConfig) *LoadBalancer {
 	lb.ctx = context.TODO()
 	return lb
 }
+
 func (lb *LoadBalancer) Run() error {
 	// Connect to each server and start health check
 	for _, serverAddr := range lb.cfg.Servers {
 		go lb.connectAndMonitor(serverAddr)
 	}
+
 	// Periodically check the health status of servers
 	healthCheckTicker := time.NewTicker(time.Duration(lb.cfg.CheckInterval) * time.Second)
 	defer healthCheckTicker.Stop()
@@ -99,20 +103,21 @@ func (lb *LoadBalancer) Run() error {
 		}
 	}
 }
+
 func (lb *LoadBalancer) connectAndMonitor(serverAddr string) {
 	conn, err := quic.DialAddr(lb.ctx, serverAddr, lb.tls, nil)
 	lb.mu.Lock()
+	defer lb.mu.Unlock()
 	if err != nil {
 		log.Printf("[loadbalancer] error dialing server %s: %v", serverAddr, err)
 		lb.serverFailureCount[serverAddr]++
-		lb.mu.Unlock()
 		return
 	}
+
 	serverID := lb.protocolHandler(conn)
 	if serverID == "" {
 		log.Printf("[loadbalancer] failed to get server ID for %s", serverAddr)
 		lb.serverFailureCount[serverAddr]++
-		lb.mu.Unlock()
 		return
 	}
 
@@ -124,8 +129,8 @@ func (lb *LoadBalancer) connectAndMonitor(serverAddr string) {
 		conn:            conn,
 	}
 	delete(lb.serverFailureCount, serverAddr)
-	lb.mu.Unlock()
 }
+
 func (lb *LoadBalancer) performHealthCheck() {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
@@ -139,6 +144,7 @@ func (lb *LoadBalancer) performHealthCheck() {
 		}
 	}
 }
+
 func (lb *LoadBalancer) displayHealthStatus() {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
@@ -154,6 +160,7 @@ func (lb *LoadBalancer) displayHealthStatus() {
 		log.Printf("[loadbalancer] Server %s failed to connect %d times", serverAddr, failCount)
 	}
 }
+
 func (lb *LoadBalancer) promptUpdateConfiguration() {
 	var updateConfig string
 	log.Print("Do you want to update the configuration? (y/n): ")
@@ -162,6 +169,7 @@ func (lb *LoadBalancer) promptUpdateConfiguration() {
 		lb.updateConfiguration()
 	}
 }
+
 func (lb *LoadBalancer) updateConfiguration() {
 	var metrics string
 	var interval int
@@ -200,6 +208,7 @@ func (lb *LoadBalancer) updateConfiguration() {
 		}
 	}
 }
+
 func (lb *LoadBalancer) protocolHandler(conn quic.Connection) string {
 	stream, err := conn.OpenStreamSync(lb.ctx)
 	if err != nil {
@@ -250,6 +259,7 @@ func (lb *LoadBalancer) protocolHandler(conn quic.Connection) string {
 
 	return ackData.ServerID
 }
+
 func (lb *LoadBalancer) sendHealthChecks(conn quic.Connection, serverID string, stream quic.Stream, checkInterval int) {
 	ticker := time.NewTicker(time.Duration(checkInterval) * time.Second)
 	defer ticker.Stop()
@@ -311,14 +321,17 @@ func (lb *LoadBalancer) sendHealthChecks(conn quic.Connection, serverID string, 
 		}
 	}
 }
+
 func (lb *LoadBalancer) markServerHealthy(serverID string) {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
 	if serverHealth, ok := lb.serverHealthMap[serverID]; ok {
 		serverHealth.FailedAttempts = 0
 		serverHealth.IsHealthy = true
+		delete(lb.serverFailureCount, serverHealth.conn.RemoteAddr().String()) // Remove from failure count if healthy
 	}
 }
+
 func (lb *LoadBalancer) markServerUnhealthy(serverID string) {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
@@ -326,15 +339,17 @@ func (lb *LoadBalancer) markServerUnhealthy(serverID string) {
 		serverHealth.FailedAttempts++
 		if serverHealth.FailedAttempts >= serverHealth.MaxFailAttempts {
 			serverHealth.IsHealthy = false
+			lb.serverFailureCount[serverHealth.conn.RemoteAddr().String()] = serverHealth.FailedAttempts
 			log.Printf("[loadbalancer] Server %s is down", serverID)
 		}
 	}
 }
+
 func (lb *LoadBalancer) reconnectDownServers() {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
 	for serverAddr, failCount := range lb.serverFailureCount {
-		go lb.connectAndMonitor(serverAddr)
 		log.Printf("[loadbalancer] Attempting to reconnect to server %s (failed %d times)", serverAddr, failCount)
+		go lb.connectAndMonitor(serverAddr)
 	}
 }

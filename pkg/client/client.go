@@ -78,37 +78,54 @@ func (c *Client) Run() error {
 		}(serverAddr)
 	}
 	// Periodically check the health status of servers
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
+	healthCheckTicker := time.NewTicker(5 * time.Second)
+	defer healthCheckTicker.Stop()
 
-	for range ticker.C {
-		healthyCount := 0
-		c.mu.Lock()
-		for serverID, health := range c.serverHealthMap {
-			if health.IsHealthy {
-				healthyCount++
-			} else {
-				if health.FailedAttempts >= health.MaxFailAttempts {
-					log.Printf("[cli] Server %s is down", serverID)
-				} else {
-					log.Printf("[cli] Server %s health check failed (%d/%d)", serverID, health.FailedAttempts, health.MaxFailAttempts)
+	// Ticker for displaying the count of healthy servers
+	statusTicker := time.NewTicker(10 * time.Second)
+	defer statusTicker.Stop()
+
+	for {
+		select {
+		case <-healthCheckTicker.C:
+			c.performHealthCheck()
+
+		case <-statusTicker.C:
+			healthyCount := 0
+			c.mu.Lock()
+			for _, health := range c.serverHealthMap {
+				if health.IsHealthy {
+					healthyCount++
 				}
 			}
-		}
-		c.mu.Unlock()
-		log.Printf("[cli] %d out of %d servers are healthy", healthyCount, len(c.serverHealthMap))
+			c.mu.Unlock()
+			log.Printf("[cli] %d out of %d servers are healthy", healthyCount, len(c.serverHealthMap))
 
-		// Check if the client wants to update the configuration
-		var updateConfig string
-		fmt.Print("Do you want to update the configuration? (y/n): ")
-		fmt.Scanln(&updateConfig)
-		if strings.ToLower(updateConfig) == "y" {
-			c.updateConfiguration()
+		default:
+			// Check if the client wants to update the configuration
+			var updateConfig string
+			fmt.Print("Do you want to update the configuration? (y/n): ")
+			fmt.Scanln(&updateConfig)
+			if strings.ToLower(updateConfig) == "y" {
+				c.updateConfiguration()
+			}
 		}
 	}
-
-	return nil
 }
+func (c *Client) performHealthCheck() {
+	c.mu.Lock()
+	for serverID, health := range c.serverHealthMap {
+		if !health.IsHealthy {
+			if health.FailedAttempts >= health.MaxFailAttempts {
+				log.Printf("[cli] Server %s is down", serverID)
+			} else {
+				log.Printf("[cli] Server %s health check failed (%d/%d)", serverID, health.FailedAttempts, health.MaxFailAttempts)
+			}
+		}
+	}
+	c.mu.Unlock()
+}
+
 func (c *Client) updateConfiguration() {
 	var metrics string
 	var interval int

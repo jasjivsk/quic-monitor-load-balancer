@@ -95,11 +95,11 @@ func (lb *LoadBalancer) Run() error {
 		case <-healthCheckTicker.C:
 			lb.performHealthCheck()
 
-		case <-updateConfigTicker.C:
-			lb.promptUpdateConfiguration()
-
 		case <-reconnectTicker.C:
 			lb.reconnectDownServers()
+
+			// case <-updateConfigTicker.C:
+			// 	lb.promptUpdateConfiguration()
 		}
 	}
 }
@@ -339,7 +339,8 @@ func (lb *LoadBalancer) markServerUnhealthy(serverID string) {
 		serverHealth.FailedAttempts++
 		if serverHealth.FailedAttempts >= serverHealth.MaxFailAttempts {
 			serverHealth.IsHealthy = false
-			lb.serverFailureCount[serverHealth.conn.RemoteAddr().String()] = serverHealth.FailedAttempts
+			serverAddr := strings.Split(serverHealth.conn.RemoteAddr().String(), ":")[0] // Extract the server address without the port number
+			lb.serverFailureCount[serverAddr] = serverHealth.FailedAttempts
 			log.Printf("[loadbalancer] Server %s is down", serverID)
 		}
 	}

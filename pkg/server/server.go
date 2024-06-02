@@ -91,7 +91,6 @@ func (s *Server) streamHandler(sess quic.Connection) {
 func (s *Server) protocolHandler(stream quic.Stream) error {
 	//THIS IS WHERE YOU START HANDLING YOUR APP PROTOCOL
 	buff := pdu.MakePduBuffer()
-
 	for {
 		n, err := stream.Read(buff)
 		if err != nil {
@@ -119,7 +118,7 @@ func (s *Server) protocolHandler(stream quic.Stream) error {
 			}
 			json.Unmarshal(data.Data, &hello)
 			// Verify JWT token (simplified, just trust the token)
-			serverID := "server123"
+			serverID := fmt.Sprintf("server-%d", s.cfg.Port)
 			// Send ACK
 			ackData := map[string]interface{}{
 				"confirmed_metrics": hello.SupportedMetrics,
@@ -210,6 +209,7 @@ func (s *Server) protocolHandler(stream quic.Stream) error {
 		}
 	}
 }
+
 func (s *Server) getHealthData() []byte {
 	// Simulate collecting current health metrics
 	cpuLoad := rand.Float64() * 100

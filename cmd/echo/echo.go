@@ -2,6 +2,10 @@ package main
 
 import (
 	"flag"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
 
 	"drexel.edu/net-quic/pkg/client"
 	"drexel.edu/net-quic/pkg/server"
@@ -20,7 +24,8 @@ var (
 	KEY_FILE  = ""
 
 	//CLIENT PARAMETERS
-	SERVER_ADDR = "localhost"
+	SERVER_ADDR  = "localhost"
+	SERVER_PORTS = "4242"
 )
 
 func processFlags() {
@@ -39,6 +44,8 @@ func processFlags() {
 		SERVER_IP, "[server mode] tls key file")
 	flag.StringVar(&SERVER_ADDR, "server-addr",
 		SERVER_ADDR, "[client mode] server address")
+	flag.StringVar(&SERVER_PORTS, "server-ports",
+		SERVER_PORTS, "[client mode] comma-separated list of server ports")
 
 	flag.IntVar(&PORT_NUMBER, "port",
 		PORT_NUMBER, "port number")
@@ -49,7 +56,7 @@ func processFlags() {
 	GENERATE_TLS = *tlsMode
 
 	if !MODE_SERVER {
-		//If the server wasnt selected, lets make the client the default
+		//If the server wasn't selected, let's make the client the default
 		MODE_CLIENT = true
 	}
 }
@@ -58,10 +65,20 @@ func main() {
 	processFlags()
 
 	if MODE_CLIENT {
+		serverPorts := make([]int, 0)
+		for _, portStr := range strings.Split(SERVER_PORTS, ",") {
+			port, err := strconv.Atoi(portStr)
+			if err != nil {
+				fmt.Printf("Invalid port: %s\n", portStr)
+				os.Exit(1)
+			}
+			serverPorts = append(serverPorts, port)
+		}
+
 		clientConfig := client.ClientConfig{
-			ServerAddr: SERVER_ADDR,
-			PortNumber: PORT_NUMBER,
-			CertFile:   CERT_FILE,
+			ServerAddr:  SERVER_ADDR,
+			ServerPorts: serverPorts,
+			CertFile:    CERT_FILE,
 		}
 		client := client.NewClient(clientConfig)
 		client.Run()

@@ -1,10 +1,10 @@
-**# Quick Health Check Protocol (QHCP) using QUIC**
+# Quick Health Check Protocol (QHCP) using QUIC
 This project implements a Quick Health Check Protocol (QHCP) using the QUIC transport protocol. The QHCP is designed to monitor the health of multiple backend servers and facilitate load balancing decisions. The solution consists of a load balancer and server components.
 
-**## Usage**
+## Usage
 The project provides a single binary that can be used to run both the load balancer and the server(s). You can use the provided `run_quic.sh` script to run the load balancer or server with the necessary parameters.
 
-**### Load Balancer**
+### Load Balancer
 To start the load balancer using the `run_quic.sh` script, follow these steps:
 
 1. Run the script: `./run_quic.sh`
@@ -22,7 +22,7 @@ Enter the interval for attempting to reconnect to down servers in seconds (defau
 Enter the TLS certificate file (leave blank for default): [Press Enter to use the default value]
 ```
 
-**### Server**
+### Server
 To start a server using the `run_quic.sh` script, follow these steps:
 
 1. Run the script: `./run_quic.sh`
@@ -37,17 +37,17 @@ Enter the TLS key file (leave blank for default): [Press Enter to use the defaul
 Enter the TLS certificate file (leave blank for default): [Press Enter to use the default value]
 ```
 
-**## Customization**
+## Customization
 The project can be customized and extended based on specific requirements. The code provides a foundation for implementing a health check protocol using QUIC, and it can be modified to include additional features, metrics, or customizations as needed.
 
-**## Dependencies**
+## Dependencies
 The project relies on the following dependencies:
 - `github.com/quic-go/quic-go`: QUIC transport protocol implementation for Go
 - `github.com/shirou/gopsutil`: Library for retrieving system information and metrics
 
 Make sure to install the dependencies before running the project.
 
-**## Limitations**
+## Limitations
 - The current implementation assumes a simple authentication mechanism using JSON Web Tokens (JWT). In a production environment, a more robust authentication and authorization system should be considered.
 - The code provided is a starting point and may require further optimizations, error handling, and testing before deployment in a production environment.
 - The project focuses on the core functionality of the health check protocol and does not include advanced features such as load balancing algorithms or distributed coordination among multiple load balancers.

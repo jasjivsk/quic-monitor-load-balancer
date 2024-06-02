@@ -20,6 +20,7 @@ type ClientConfig struct {
 	ServerPorts []int
 	CertFile    string
 }
+
 type Client struct {
 	cfg             ClientConfig
 	tls             *tls.Config
@@ -27,6 +28,7 @@ type Client struct {
 	serverHealthMap map[string]*ServerHealth
 	mu              sync.Mutex
 }
+
 type ServerHealth struct {
 	ServerID        string
 	IsHealthy       bool
@@ -55,28 +57,14 @@ func NewClient(cfg ClientConfig) *Client {
 	cli.ctx = context.TODO()
 	return cli
 }
+
 func (c *Client) Run() error {
 	// Connect to each server and start health check
 	for _, port := range c.cfg.ServerPorts {
 		serverAddr := fmt.Sprintf("%s:%d", c.cfg.ServerAddr, port)
-		go func(serverAddr string) {
-			conn, err := quic.DialAddr(c.ctx, serverAddr, c.tls, nil)
-			if err != nil {
-				log.Printf("[cli] error dialing server %s: %v", serverAddr, err)
-				return
-			}
-			serverID := c.protocolHandler(conn)
-			c.mu.Lock()
-			c.serverHealthMap[serverID] = &ServerHealth{
-				ServerID:        serverID,
-				IsHealthy:       true,
-				FailedAttempts:  0,
-				MaxFailAttempts: 3,
-				conn:            conn,
-			}
-			c.mu.Unlock()
-		}(serverAddr)
+		go c.connectAndMonitor(serverAddr)
 	}
+
 	// Periodically check the health status of servers
 	healthCheckTicker := time.NewTicker(5 * time.Second)
 	defer healthCheckTicker.Stop()
@@ -85,35 +73,53 @@ func (c *Client) Run() error {
 	statusTicker := time.NewTicker(10 * time.Second)
 	defer statusTicker.Stop()
 
+	// Ticker for prompting user to update configuration
+	updateConfigTicker := time.NewTicker(30 * time.Second)
+	defer updateConfigTicker.Stop()
+
+	go func() {
+		for range statusTicker.C {
+			c.displayHealthStatus()
+		}
+	}()
+
 	for {
 		select {
 		case <-healthCheckTicker.C:
 			c.performHealthCheck()
 
-		case <-statusTicker.C:
-			healthyCount := 0
-			c.mu.Lock()
-			for _, health := range c.serverHealthMap {
-				if health.IsHealthy {
-					healthyCount++
-				}
-			}
-			c.mu.Unlock()
-			log.Printf("[cli] %d out of %d servers are healthy", healthyCount, len(c.serverHealthMap))
-
-		default:
-			// Check if the client wants to update the configuration
-			var updateConfig string
-			fmt.Print("Do you want to update the configuration? (y/n): ")
-			fmt.Scanln(&updateConfig)
-			if strings.ToLower(updateConfig) == "y" {
-				c.updateConfiguration()
-			}
+		case <-updateConfigTicker.C:
+			c.promptUpdateConfiguration()
 		}
 	}
 }
+
+func (c *Client) connectAndMonitor(serverAddr string) {
+	conn, err := quic.DialAddr(c.ctx, serverAddr, c.tls, nil)
+	if err != nil {
+		log.Printf("[cli] error dialing server %s: %v", serverAddr, err)
+		return
+	}
+	serverID := c.protocolHandler(conn)
+	if serverID == "" {
+		log.Printf("[cli] failed to get server ID for %s", serverAddr)
+		return
+	}
+
+	c.mu.Lock()
+	c.serverHealthMap[serverID] = &ServerHealth{
+		ServerID:        serverID,
+		IsHealthy:       true,
+		FailedAttempts:  0,
+		MaxFailAttempts: 3,
+		conn:            conn,
+	}
+	c.mu.Unlock()
+}
+
 func (c *Client) performHealthCheck() {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	for serverID, health := range c.serverHealthMap {
 		if !health.IsHealthy {
 			if health.FailedAttempts >= health.MaxFailAttempts {
@@ -123,7 +129,27 @@ func (c *Client) performHealthCheck() {
 			}
 		}
 	}
-	c.mu.Unlock()
+}
+
+func (c *Client) displayHealthStatus() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	healthyCount := 0
+	for _, health := range c.serverHealthMap {
+		if health.IsHealthy {
+			healthyCount++
+		}
+	}
+	log.Printf("[cli] %d out of %d servers are healthy", healthyCount, len(c.serverHealthMap))
+}
+
+func (c *Client) promptUpdateConfiguration() {
+	var updateConfig string
+	fmt.Print("Do you want to update the configuration? (y/n): ")
+	fmt.Scanln(&updateConfig)
+	if strings.ToLower(updateConfig) == "y" {
+		c.updateConfiguration()
+	}
 }
 
 func (c *Client) updateConfiguration() {
@@ -148,6 +174,7 @@ func (c *Client) updateConfiguration() {
 	configUpdatePduBytes, _ := pdu.PduToBytes(&configUpdatePdu)
 
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	for serverID, health := range c.serverHealthMap {
 		if health.IsHealthy {
 			stream, err := health.conn.OpenStreamSync(c.ctx)
@@ -163,8 +190,8 @@ func (c *Client) updateConfiguration() {
 			log.Printf("[cli] Sent CONFIG_UPDATE to server %s", serverID)
 		}
 	}
-	c.mu.Unlock()
 }
+
 func (c *Client) protocolHandler(conn quic.Connection) string {
 	stream, err := conn.OpenStreamSync(c.ctx)
 	if err != nil {
@@ -212,7 +239,13 @@ func (c *Client) protocolHandler(conn quic.Connection) string {
 	json.Unmarshal(ackPdu.Data, &ackData)
 
 	// Periodically send health check requests
-	ticker := time.NewTicker(time.Duration(helloData["check_interval"].(int)) * time.Second)
+	go c.sendHealthChecks(conn, ackData.ServerID, stream, helloData["check_interval"].(int))
+
+	return ackData.ServerID
+}
+
+func (c *Client) sendHealthChecks(conn quic.Connection, serverID string, stream quic.Stream, checkInterval int) {
+	ticker := time.NewTicker(time.Duration(checkInterval) * time.Second)
 	defer ticker.Stop()
 
 	for range ticker.C {
@@ -221,48 +254,30 @@ func (c *Client) protocolHandler(conn quic.Connection) string {
 		reqBytes, _ := pdu.PduToBytes(&reqPdu)
 		_, err := stream.Write(reqBytes)
 		if err != nil {
-			log.Printf("[client] Error sending health check request to server %s: %v", ackData.ServerID, err)
-			c.mu.Lock()
-			serverHealth, ok := c.serverHealthMap[ackData.ServerID]
-			if ok {
-				serverHealth.FailedAttempts++
-				if serverHealth.FailedAttempts >= serverHealth.MaxFailAttempts {
-					serverHealth.IsHealthy = false
-					log.Printf("[client] Server %s is down", ackData.ServerID)
-				}
-			}
-			c.mu.Unlock()
+			log.Printf("[client] Error sending health check request to server %s: %v", serverID, err)
+			c.markServerUnhealthy(serverID)
 			continue
 		}
-		log.Printf("[client] Sent health check request to server %s", ackData.ServerID)
+		log.Printf("[client] Sent health check request to server %s", serverID)
 
 		// Read and process server response
 		buffer := pdu.MakePduBuffer()
 		n, err := stream.Read(buffer)
 		if err != nil {
-			log.Printf("[client] Error reading from stream for server %s: %v", ackData.ServerID, err)
-			c.mu.Lock()
-			serverHealth, ok := c.serverHealthMap[ackData.ServerID]
-			if ok {
-				serverHealth.FailedAttempts++
-				if serverHealth.FailedAttempts >= serverHealth.MaxFailAttempts {
-					serverHealth.IsHealthy = false
-					log.Printf("[client] Server %s is down", ackData.ServerID)
-				}
-			}
-			c.mu.Unlock()
+			log.Printf("[client] Error reading from stream for server %s: %v", serverID, err)
+			c.markServerUnhealthy(serverID)
 			continue
 		}
 
-		log.Printf("[client] Received PDU bytes from server %s: %v", ackData.ServerID, buffer[:n])
+		log.Printf("[client] Received PDU bytes from server %s: %v", serverID, buffer[:n])
 		rsp, err := pdu.PduFromBytes(buffer[:n])
 		if err != nil {
-			log.Printf("[client] Error converting pdu from bytes for server %s: %s", ackData.ServerID, err)
+			log.Printf("[client] Error converting pdu from bytes for server %s: %s", serverID, err)
 			continue
 		}
 		rspDataString := string(rsp.Data)
-		log.Printf("[client] Got response from server %s: %s", ackData.ServerID, rsp.ToJsonString())
-		log.Printf("[client] Decoded string from server %s: %s", ackData.ServerID, rspDataString)
+		log.Printf("[client] Got response from server %s: %s", serverID, rsp.ToJsonString())
+		log.Printf("[client] Decoded string from server %s: %s", serverID, rspDataString)
 		switch rsp.Mtype {
 		case pdu.TYPE_HEALTH_RESPONSE:
 			var healthData struct {
@@ -270,40 +285,44 @@ func (c *Client) protocolHandler(conn quic.Connection) string {
 				Metrics   map[string]interface{} `json:"metrics"`
 			}
 			json.Unmarshal(rsp.Data, &healthData)
-			log.Printf("[client] Received health data from server %s: %+v", ackData.ServerID, healthData)
-			c.mu.Lock()
-			serverHealth, ok := c.serverHealthMap[ackData.ServerID]
-			if ok {
-				serverHealth.FailedAttempts = 0
-				serverHealth.IsHealthy = true
-			}
-			c.mu.Unlock()
+			log.Printf("[client] Received health data from server %s: %+v", serverID, healthData)
+			c.markServerHealthy(serverID)
 		case pdu.TYPE_ERROR:
 			var errorData struct {
 				ErrorCode    int    `json:"error_code"`
 				ErrorMessage string `json:"error_message"`
 			}
 			json.Unmarshal(rsp.Data, &errorData)
-			log.Printf("[client] Error from server %s: %d - %s", ackData.ServerID, errorData.ErrorCode, errorData.ErrorMessage)
-			c.mu.Lock()
-			serverHealth, ok := c.serverHealthMap[ackData.ServerID]
-			if ok {
-				serverHealth.FailedAttempts++
-				if serverHealth.FailedAttempts >= serverHealth.MaxFailAttempts {
-					serverHealth.IsHealthy = false
-					log.Printf("[client] Server %s is down", ackData.ServerID)
-				}
-			}
-			c.mu.Unlock()
+			log.Printf("[client] Error from server %s: %d - %s", serverID, errorData.ErrorCode, errorData.ErrorMessage)
+			c.markServerUnhealthy(serverID)
 		case pdu.TYPE_CONFIG_ACK:
 			var configAck struct {
 				UpdateStatus string `json:"update_status"`
 				Message      string `json:"message"`
 			}
 			json.Unmarshal(rsp.Data, &configAck)
-			log.Printf("[client] Configuration update ACK from server %s: %s - %s", ackData.ServerID, configAck.UpdateStatus, configAck.Message)
+			log.Printf("[client] Configuration update ACK from server %s: %s - %s", serverID, configAck.UpdateStatus, configAck.Message)
 		}
 	}
+}
 
-	return ackData.ServerID
+func (c *Client) markServerHealthy(serverID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if serverHealth, ok := c.serverHealthMap[serverID]; ok {
+		serverHealth.FailedAttempts = 0
+		serverHealth.IsHealthy = true
+	}
+}
+
+func (c *Client) markServerUnhealthy(serverID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if serverHealth, ok := c.serverHealthMap[serverID]; ok {
+		serverHealth.FailedAttempts++
+		if serverHealth.FailedAttempts >= serverHealth.MaxFailAttempts {
+			serverHealth.IsHealthy = false
+			log.Printf("[client] Server %s is down", serverID)
+		}
+	}
 }

@@ -22,6 +22,7 @@ type ServerConfig struct {
 	Address  string
 	Port     int
 }
+
 type Server struct {
 	cfg ServerConfig
 	tls *tls.Config
@@ -36,6 +37,7 @@ func NewServer(cfg ServerConfig) *Server {
 	server.ctx = context.TODO()
 	return server
 }
+
 func (s *Server) getTLS() *tls.Config {
 	if s.cfg.GenTLS {
 		tlsConfig, err := util.GenerateTLSConfig()
@@ -51,7 +53,6 @@ func (s *Server) getTLS() *tls.Config {
 		return tlsConfig
 	}
 }
-
 func (s *Server) Run() error {
 	address := fmt.Sprintf("%s:%d", s.cfg.Address, s.cfg.Port)
 	listener, err := quic.ListenAddr(address, s.tls, nil)
@@ -59,7 +60,7 @@ func (s *Server) Run() error {
 		log.Printf("error listening: %s", err)
 		return err
 	}
-
+	log.Printf("[server] Listening on %s", address)
 	//SERVER LOOP
 	for {
 		log.Println("Accepting new session")
@@ -72,7 +73,6 @@ func (s *Server) Run() error {
 		go s.streamHandler(sess)
 	}
 }
-
 func (s *Server) streamHandler(sess quic.Connection) {
 	for {
 		log.Print("[server] waiting for client to open stream")
@@ -81,16 +81,13 @@ func (s *Server) streamHandler(sess quic.Connection) {
 			log.Printf("[server] stream closed: %s", err)
 			break
 		}
-
 		//Handle protocol activity on stream
 		s.protocolHandler(stream)
 	}
 }
-
 func (s *Server) protocolHandler(stream quic.Stream) error {
 	//THIS IS WHERE YOU START HANDLING YOUR APP PROTOCOL
 	buff := pdu.MakePduBuffer()
-
 	for {
 		n, err := stream.Read(buff)
 		if err != nil {
@@ -209,7 +206,6 @@ func (s *Server) protocolHandler(stream quic.Stream) error {
 		}
 	}
 }
-
 func (s *Server) getHealthData() []byte {
 	// Get the current CPU usage percentage
 	cpuPercent, err := cpu.Percent(0, false)
@@ -217,7 +213,6 @@ func (s *Server) getHealthData() []byte {
 		log.Printf("[server] Error getting CPU usage: %v", err)
 		cpuPercent = []float64{0.0}
 	}
-
 	// Get the current memory usage percentage
 	memStat, err := mem.VirtualMemory()
 	if err != nil {
@@ -236,7 +231,6 @@ func (s *Server) getHealthData() []byte {
 	jsonData, _ := json.Marshal(healthData)
 	return jsonData
 }
-
 func (s *Server) updateHealthCheckConfig(newMetrics []string, newCheckInterval int) {
 	// Update health check configuration with the new metrics and interval
 	log.Printf("[server] Updated health check configuration: metrics=%v, interval=%d", newMetrics, newCheckInterval)

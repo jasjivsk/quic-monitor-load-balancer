@@ -63,7 +63,7 @@ func (s *Server) Run() error {
 	log.Printf("[server] Listening on %s", address)
 	//SERVER LOOP
 	for {
-		log.Println("Accepting new session")
+		log.Println("[server] Waiting for loadbalancer to connect..")
 		sess, err := listener.Accept(s.ctx)
 		if err != nil {
 			log.Printf("error accepting: %s", err)

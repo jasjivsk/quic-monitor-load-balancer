@@ -156,6 +156,7 @@ func (lb *LoadBalancer) displayHealthStatus() {
 	}
 	totalServers := len(lb.cfg.Servers)
 	log.Printf("[loadbalancer] %d out of %d servers are healthy", healthyCount, totalServers)
+	log.Printf("[loadbalancer]")
 	for serverAddr, failCount := range lb.serverFailureCount {
 		log.Printf("[loadbalancer] Server %s failed to connect %d times", serverAddr, failCount)
 	}
@@ -234,7 +235,7 @@ func (lb *LoadBalancer) protocolHandler(conn quic.Connection) string {
 		log.Printf("[loadbalancer] error writing to stream %s", err)
 		return ""
 	}
-	log.Printf("[loadbalancer] wrote %d bytes to stream", n)
+	//log.Printf("[loadbalancer] wrote %d bytes to stream", n)
 	// Read the ACK message from the server
 	ackBuffer := pdu.MakePduBuffer()
 	n, err = stream.Read(ackBuffer)
@@ -284,14 +285,14 @@ func (lb *LoadBalancer) sendHealthChecks(conn quic.Connection, serverID string, 
 			continue
 		}
 
-		log.Printf("[loadbalancer] Received PDU bytes from server %s: %v", serverID, buffer[:n])
+		//log.Printf("[loadbalancer] Received PDU bytes from server %s: %v", serverID, buffer[:n])
 		rsp, err := pdu.PduFromBytes(buffer[:n])
 		if err != nil {
 			log.Printf("[loadbalancer] Error converting pdu from bytes for server %s: %s", serverID, err)
 			continue
 		}
 		rspDataString := string(rsp.Data)
-		log.Printf("[loadbalancer] Got response from server %s: %s", serverID, rsp.ToJsonString())
+		//log.Printf("[loadbalancer] Got response from server %s: %s", serverID, rsp.ToJsonString())
 		log.Printf("[loadbalancer] Decoded string from server %s: %s", serverID, rspDataString)
 		switch rsp.Mtype {
 		case pdu.TYPE_HEALTH_RESPONSE:

@@ -3,7 +3,6 @@ package pdu
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 )
 
 const (
@@ -80,7 +79,7 @@ func (pdu *PDU) ToJsonString() string {
 }
 
 func PduFromBytes(raw []byte) (*PDU, error) {
-	log.Printf("[pdu] Received PDU bytes: %s", string(raw))
+	//log.Printf("[pdu] Received PDU bytes: %s", string(raw))
 	pdu := &PDU{}
 	err := json.Unmarshal(raw, pdu)
 	if err != nil {
@@ -90,6 +89,6 @@ func PduFromBytes(raw []byte) (*PDU, error) {
 }
 
 func PduToBytes(pdu *PDU) ([]byte, error) {
-	log.Printf("[pdu] PDU to be marshaled: %+v", pdu)
+	//log.Printf("[pdu] PDU to be marshaled: %+v", pdu)
 	return json.Marshal(pdu)
 }

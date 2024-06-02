@@ -6,12 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"math/rand"
 	"time"
 
 	"drexel.edu/net-quic/pkg/pdu"
 	"drexel.edu/net-quic/pkg/util"
 	"github.com/quic-go/quic-go"
+	"github.com/shirou/gopsutil/cpu"
+	"github.com/shirou/gopsutil/mem"
 )
 
 type ServerConfig struct {
@@ -210,17 +211,26 @@ func (s *Server) protocolHandler(stream quic.Stream) error {
 }
 
 func (s *Server) getHealthData() []byte {
-	// Simulate collecting current health metrics
-	cpuLoad := rand.Float64() * 100
-	memUsage := rand.Float64() * 100
-	respTime := rand.Float64() * 1000
+	// Get the current CPU usage percentage
+	cpuPercent, err := cpu.Percent(0, false)
+	if err != nil {
+		log.Printf("[server] Error getting CPU usage: %v", err)
+		cpuPercent = []float64{0.0}
+	}
+
+	// Get the current memory usage percentage
+	memStat, err := mem.VirtualMemory()
+	if err != nil {
+		log.Printf("[server] Error getting memory usage: %v", err)
+		memStat = &mem.VirtualMemoryStat{}
+	}
+	memPercent := memStat.UsedPercent
 
 	healthData := map[string]interface{}{
 		"timestamp": time.Now().Format(time.RFC3339),
 		"metrics": map[string]float64{
-			"cpu_load":      cpuLoad,
-			"memory_usage":  memUsage,
-			"response_time": respTime,
+			"cpu_usage_percent":    cpuPercent[0],
+			"memory_usage_percent": memPercent,
 		},
 	}
 	jsonData, _ := json.Marshal(healthData)

@@ -74,7 +74,7 @@ func (c *Client) Run() error {
 	defer statusTicker.Stop()
 
 	// Ticker for prompting user to update configuration
-	updateConfigTicker := time.NewTicker(30 * time.Second)
+	updateConfigTicker := time.NewTicker(15 * time.Second)
 	defer updateConfigTicker.Stop()
 
 	go func() {
@@ -281,11 +281,12 @@ func (c *Client) sendHealthChecks(conn quic.Connection, serverID string, stream 
 		switch rsp.Mtype {
 		case pdu.TYPE_HEALTH_RESPONSE:
 			var healthData struct {
-				Timestamp string                 `json:"timestamp"`
-				Metrics   map[string]interface{} `json:"metrics"`
+				Timestamp string             `json:"timestamp"`
+				Metrics   map[string]float64 `json:"metrics"`
 			}
 			json.Unmarshal(rsp.Data, &healthData)
-			log.Printf("[client] Received health data from server %s: %+v", serverID, healthData)
+			log.Printf("[client] Received health data from server %s: CPU Usage: %.2f%%, Memory Usage: %.2f%%",
+				serverID, healthData.Metrics["cpu_usage_percent"], healthData.Metrics["memory_usage_percent"])
 			c.markServerHealthy(serverID)
 		case pdu.TYPE_ERROR:
 			var errorData struct {

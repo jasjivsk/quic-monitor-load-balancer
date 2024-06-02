@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,6 +32,7 @@ type ServerHealth struct {
 	IsHealthy       bool
 	FailedAttempts  int
 	MaxFailAttempts int
+	conn            quic.Connection
 }
 
 func NewClient(cfg ClientConfig) *Client {
@@ -69,7 +71,8 @@ func (c *Client) Run() error {
 				ServerID:        serverID,
 				IsHealthy:       true,
 				FailedAttempts:  0,
-				MaxFailAttempts: 3, // Set the maximum number of failed attempts before considering the server as down
+				MaxFailAttempts: 3,
+				conn:            conn,
 			}
 			c.mu.Unlock()
 		}(serverAddr)
@@ -94,9 +97,56 @@ func (c *Client) Run() error {
 		}
 		c.mu.Unlock()
 		log.Printf("[cli] %d out of %d servers are healthy", healthyCount, len(c.serverHealthMap))
+
+		// Check if the client wants to update the configuration
+		var updateConfig string
+		fmt.Print("Do you want to update the configuration? (y/n): ")
+		fmt.Scanln(&updateConfig)
+		if strings.ToLower(updateConfig) == "y" {
+			c.updateConfiguration()
+		}
 	}
 
 	return nil
+}
+func (c *Client) updateConfiguration() {
+	var metrics string
+	var interval int
+	fmt.Print("Enter the new metrics (comma-separated): ")
+	fmt.Scanln(&metrics)
+	fmt.Print("Enter the new check interval (in seconds): ")
+	fmt.Scanln(&interval)
+
+	newMetrics := strings.Split(metrics, ",")
+	configUpdateData := map[string]interface{}{
+		"new_metrics":        newMetrics,
+		"new_check_interval": interval,
+	}
+	configUpdateBytes, _ := json.Marshal(configUpdateData)
+	configUpdatePdu := pdu.PDU{
+		Mtype:  pdu.TYPE_CONFIG_UPDATE,
+		Length: uint16(len(configUpdateBytes)),
+		Data:   configUpdateBytes,
+	}
+	configUpdatePduBytes, _ := pdu.PduToBytes(&configUpdatePdu)
+
+	c.mu.Lock()
+	for serverID, health := range c.serverHealthMap {
+		if health.IsHealthy {
+			stream, err := health.conn.OpenStreamSync(c.ctx)
+			if err != nil {
+				log.Printf("[cli] Error opening stream for server %s: %v", serverID, err)
+				continue
+			}
+			_, err = stream.Write(configUpdatePduBytes)
+			if err != nil {
+				log.Printf("[cli] Error sending CONFIG_UPDATE to server %s: %v", serverID, err)
+				continue
+			}
+			log.Printf("[cli] Sent CONFIG_UPDATE to server %s", serverID)
+		}
+	}
+	c.mu.Unlock()
 }
 func (c *Client) protocolHandler(conn quic.Connection) string {
 	stream, err := conn.OpenStreamSync(c.ctx)
@@ -159,7 +209,10 @@ func (c *Client) protocolHandler(conn quic.Connection) string {
 			serverHealth, ok := c.serverHealthMap[ackData.ServerID]
 			if ok {
 				serverHealth.FailedAttempts++
-				serverHealth.IsHealthy = serverHealth.FailedAttempts < serverHealth.MaxFailAttempts
+				if serverHealth.FailedAttempts >= serverHealth.MaxFailAttempts {
+					serverHealth.IsHealthy = false
+					log.Printf("[client] Server %s is down", ackData.ServerID)
+				}
 			}
 			c.mu.Unlock()
 			continue
@@ -175,7 +228,10 @@ func (c *Client) protocolHandler(conn quic.Connection) string {
 			serverHealth, ok := c.serverHealthMap[ackData.ServerID]
 			if ok {
 				serverHealth.FailedAttempts++
-				serverHealth.IsHealthy = serverHealth.FailedAttempts < serverHealth.MaxFailAttempts
+				if serverHealth.FailedAttempts >= serverHealth.MaxFailAttempts {
+					serverHealth.IsHealthy = false
+					log.Printf("[client] Server %s is down", ackData.ServerID)
+				}
 			}
 			c.mu.Unlock()
 			continue
@@ -216,9 +272,19 @@ func (c *Client) protocolHandler(conn quic.Connection) string {
 			serverHealth, ok := c.serverHealthMap[ackData.ServerID]
 			if ok {
 				serverHealth.FailedAttempts++
-				serverHealth.IsHealthy = serverHealth.FailedAttempts < serverHealth.MaxFailAttempts
+				if serverHealth.FailedAttempts >= serverHealth.MaxFailAttempts {
+					serverHealth.IsHealthy = false
+					log.Printf("[client] Server %s is down", ackData.ServerID)
+				}
 			}
 			c.mu.Unlock()
+		case pdu.TYPE_CONFIG_ACK:
+			var configAck struct {
+				UpdateStatus string `json:"update_status"`
+				Message      string `json:"message"`
+			}
+			json.Unmarshal(rsp.Data, &configAck)
+			log.Printf("[client] Configuration update ACK from server %s: %s - %s", ackData.ServerID, configAck.UpdateStatus, configAck.Message)
 		}
 	}
 

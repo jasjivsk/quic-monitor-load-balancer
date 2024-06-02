@@ -21,7 +21,6 @@ type ServerConfig struct {
 	Address  string
 	Port     int
 }
-
 type Server struct {
 	cfg ServerConfig
 	tls *tls.Config
@@ -36,7 +35,6 @@ func NewServer(cfg ServerConfig) *Server {
 	server.ctx = context.TODO()
 	return server
 }
-
 func (s *Server) getTLS() *tls.Config {
 	if s.cfg.GenTLS {
 		tlsConfig, err := util.GenerateTLSConfig()
@@ -91,6 +89,7 @@ func (s *Server) streamHandler(sess quic.Connection) {
 func (s *Server) protocolHandler(stream quic.Stream) error {
 	//THIS IS WHERE YOU START HANDLING YOUR APP PROTOCOL
 	buff := pdu.MakePduBuffer()
+
 	for {
 		n, err := stream.Read(buff)
 		if err != nil {
@@ -229,7 +228,7 @@ func (s *Server) getHealthData() []byte {
 }
 
 func (s *Server) updateHealthCheckConfig(newMetrics []string, newCheckInterval int) {
-	// Update health check configuration (not implemented in this example)
-	log.Printf("[server] Updated health check configuration: metrics=%v, interval=%d",
-		newMetrics, newCheckInterval)
+	// Update health check configuration with the new metrics and interval
+	log.Printf("[server] Updated health check configuration: metrics=%v, interval=%d", newMetrics, newCheckInterval)
+	// Implement the logic to update the server's health check configuration
 }

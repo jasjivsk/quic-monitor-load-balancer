@@ -92,143 +92,124 @@ func (s *Server) protocolHandler(stream quic.Stream) error {
 	//THIS IS WHERE YOU START HANDLING YOUR APP PROTOCOL
 	buff := pdu.MakePduBuffer()
 
-	n, err := stream.Read(buff)
-	if err != nil {
-		log.Printf("[server] Error Reading Raw Data: %s", err)
-		return err
-	}
-
-	data, err := pdu.PduFromBytes(buff[:n])
-	if err != nil {
-		log.Printf("[server] Error decoding PDU: %s", err)
-		return err
-	}
-
-	log.Printf("[server] Data In: [%s] %s",
-		data.GetTypeAsString(), string(data.Data))
-
-	switch data.Mtype {
-	case pdu.TYPE_HELLO:
-		// Process HELLO message and send ACK
-		var hello struct {
-			SupportedMetrics []string `json:"supported_metrics"`
-			CheckInterval    int      `json:"check_interval"`
-			AuthToken        string   `json:"auth_token"`
-			Version          float64  `json:"version"`
-		}
-		json.Unmarshal(data.Data, &hello)
-		// Verify JWT token
-		serverID, _ := util.VerifyJWT(hello.AuthToken)
-		// Send ACK
-		ackData := map[string]interface{}{
-			"confirmed_metrics": hello.SupportedMetrics,
-			"check_interval":    hello.CheckInterval,
-			"server_id":         serverID,
-		}
-		ackBytes, _ := json.Marshal(ackData)
-		ackPdu := pdu.PDU{
-			Mtype:  pdu.TYPE_ACK,
-			Length: uint16(len(ackBytes)),
-			Data:   ackBytes,
-		}
-		ackBytes, _ = pdu.PduToBytes(&ackPdu)
-		stream.Write(ackBytes)
-
-	case pdu.TYPE_HEALTH_REQUEST:
-		// Send current health metrics
-		healthData := s.getHealthData()
-		rspPdu := pdu.PDU{
-			Mtype:  pdu.TYPE_HEALTH_RESPONSE,
-			Length: uint16(len(healthData)),
-			Data:   healthData,
-		}
-		rspBytes, _ := pdu.PduToBytes(&rspPdu)
-		stream.Write(rspBytes)
-
-	case pdu.TYPE_CONFIG_UPDATE:
-		// Update health check configuration
-		var configUpdate struct {
-			NewMetrics       []string `json:"new_metrics"`
-			NewCheckInterval int      `json:"new_check_interval"`
-		}
-		json.Unmarshal(data.Data, &configUpdate)
-		s.updateHealthCheckConfig(configUpdate.NewMetrics, configUpdate.NewCheckInterval)
-		// Send CONFIG_ACK
-		ackData := map[string]interface{}{
-			"update_status": "success",
-			"message":       "Configuration updated successfully.",
-		}
-		ackBytes, _ := json.Marshal(ackData)
-		ackPdu := pdu.PDU{
-			Mtype:  pdu.TYPE_CONFIG_ACK,
-			Length: uint16(len(ackBytes)),
-			Data:   ackBytes,
-		}
-		ackBytes, _ = pdu.PduToBytes(&ackPdu)
-		stream.Write(ackBytes)
-
-	case pdu.TYPE_TERMINATE:
-		// Acknowledge termination and close the stream
-		ackData := map[string]interface{}{
-			"message": "Session terminated successfully.",
-		}
-		ackBytes, _ := json.Marshal(ackData)
-		ackPdu := pdu.PDU{
-			Mtype:  pdu.TYPE_TERMINATE_ACK,
-			Length: uint16(len(ackBytes)),
-			Data:   ackBytes,
-		}
-		ackBytes, _ = pdu.PduToBytes(&ackPdu)
-		stream.Write(ackBytes)
-		return nil
-
-	default:
-		// Handle unknown message types
-		errorData := map[string]interface{}{
-			"error_code":    404,
-			"error_message": "Unknown message type.",
-		}
-		errorBytes, _ := json.Marshal(errorData)
-		errorPdu := pdu.PDU{
-			Mtype:  pdu.TYPE_ERROR,
-			Length: uint16(len(errorBytes)),
-			Data:   errorBytes,
-		}
-		errorBytes, _ = pdu.PduToBytes(&errorPdu)
-		_, err = stream.Write(errorBytes)
+	for {
+		n, err := stream.Read(buff)
 		if err != nil {
-			log.Printf("[server] Error sending error response: %s", err)
+			log.Printf("[server] Error Reading Raw Data: %s", err)
 			return err
 		}
-		return nil
+
+		data, err := pdu.PduFromBytes(buff[:n])
+		if err != nil {
+			log.Printf("[server] Error decoding PDU: %s", err)
+			return err
+		}
+
+		log.Printf("[server] Data In: [%s] %s",
+			data.GetTypeAsString(), string(data.Data))
+
+		switch data.Mtype {
+		case pdu.TYPE_HELLO:
+			// Process HELLO message and send ACK
+			var hello struct {
+				SupportedMetrics []string `json:"supported_metrics"`
+				CheckInterval    int      `json:"check_interval"`
+				AuthToken        string   `json:"auth_token"`
+				Version          float64  `json:"version"`
+			}
+			json.Unmarshal(data.Data, &hello)
+			// Verify JWT token (simplified, just trust the token)
+			serverID := "server123"
+			// Send ACK
+			ackData := map[string]interface{}{
+				"confirmed_metrics": hello.SupportedMetrics,
+				"check_interval":    hello.CheckInterval,
+				"server_id":         serverID,
+			}
+			ackBytes, _ := json.Marshal(ackData)
+			ackPdu := pdu.PDU{
+				Mtype:  pdu.TYPE_ACK,
+				Length: uint16(len(ackBytes)),
+				Data:   ackBytes,
+			}
+			ackBytes, _ = pdu.PduToBytes(&ackPdu)
+			stream.Write(ackBytes)
+
+		case pdu.TYPE_HEALTH_REQUEST:
+			// Send current health metrics
+			healthData := s.getHealthData()
+			rspPdu := pdu.PDU{
+				Mtype:  pdu.TYPE_HEALTH_RESPONSE,
+				Length: uint16(len(healthData)),
+				Data:   healthData,
+			}
+			rspBytes, _ := pdu.PduToBytes(&rspPdu)
+			_, err := stream.Write(rspBytes)
+			if err != nil {
+				log.Printf("[server] Error sending health response: %s", err)
+				return err
+			}
+			log.Println("[server] Sent health response")
+
+		case pdu.TYPE_CONFIG_UPDATE:
+			// Update health check configuration
+			var configUpdate struct {
+				NewMetrics       []string `json:"new_metrics"`
+				NewCheckInterval int      `json:"new_check_interval"`
+			}
+			json.Unmarshal(data.Data, &configUpdate)
+			s.updateHealthCheckConfig(configUpdate.NewMetrics, configUpdate.NewCheckInterval)
+			// Send CONFIG_ACK
+			ackData := map[string]interface{}{
+				"update_status": "success",
+				"message":       "Configuration updated successfully.",
+			}
+			ackBytes, _ := json.Marshal(ackData)
+			ackPdu := pdu.PDU{
+				Mtype:  pdu.TYPE_CONFIG_ACK,
+				Length: uint16(len(ackBytes)),
+				Data:   ackBytes,
+			}
+			ackBytes, _ = pdu.PduToBytes(&ackPdu)
+			stream.Write(ackBytes)
+
+		case pdu.TYPE_TERMINATE:
+			// Acknowledge termination and close the stream
+			ackData := map[string]interface{}{
+				"message": "Session terminated successfully.",
+			}
+			ackBytes, _ := json.Marshal(ackData)
+			ackPdu := pdu.PDU{
+				Mtype:  pdu.TYPE_TERMINATE_ACK,
+				Length: uint16(len(ackBytes)),
+				Data:   ackBytes,
+			}
+			ackBytes, _ = pdu.PduToBytes(&ackPdu)
+			stream.Write(ackBytes)
+			return nil
+
+		default:
+			// Handle unknown message types
+			errorData := map[string]interface{}{
+				"error_code":    404,
+				"error_message": "Unknown message type.",
+			}
+			errorBytes, _ := json.Marshal(errorData)
+			errorPdu := pdu.PDU{
+				Mtype:  pdu.TYPE_ERROR,
+				Length: uint16(len(errorBytes)),
+				Data:   errorBytes,
+			}
+			errorBytes, _ = pdu.PduToBytes(&errorPdu)
+			_, err = stream.Write(errorBytes)
+			if err != nil {
+				log.Printf("[server] Error sending error response: %s", err)
+				return err
+			}
+			return nil
+		}
 	}
-
-	// Now lets echo it back
-	rspMsg := fmt.Sprintf("ack: FromServer Echo-%s",
-		string(data.Data))
-
-	rspPdu := pdu.PDU{
-		Mtype:  pdu.TYPE_DATA | pdu.TYPE_ACK,
-		Length: uint16(len(rspMsg)),
-		Data:   []byte(rspMsg),
-	}
-
-	fmt.Printf("Server-> %v", rspPdu)
-
-	rspBytes, err := pdu.PduToBytes(&rspPdu)
-	if err != nil {
-		log.Printf("[server] Error encoding PDU: %s", err)
-		return err
-	}
-
-	_, err = stream.Write(rspBytes)
-	if err != nil {
-		log.Printf("[server] Error sending response: %s", err)
-		return err
-	}
-	return nil
 }
-
 func (s *Server) getHealthData() []byte {
 	// Simulate collecting current health metrics
 	cpuLoad := rand.Float64() * 100

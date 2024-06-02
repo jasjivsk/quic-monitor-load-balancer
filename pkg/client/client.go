@@ -16,17 +16,21 @@ import (
 )
 
 type ClientConfig struct {
-	ServerAddr  string
-	ServerPorts []int
-	CertFile    string
+	ServerAddr        string
+	ServerPorts       []int
+	CertFile          string
+	MaxFailAttempts   int
+	CheckInterval     int
+	ReconnectInterval int
 }
 
 type Client struct {
-	cfg             ClientConfig
-	tls             *tls.Config
-	ctx             context.Context
-	serverHealthMap map[string]*ServerHealth
-	mu              sync.Mutex
+	cfg                ClientConfig
+	tls                *tls.Config
+	ctx                context.Context
+	serverHealthMap    map[string]*ServerHealth
+	serverFailureCount map[string]int
+	mu                 sync.Mutex
 }
 
 type ServerHealth struct {
@@ -39,8 +43,9 @@ type ServerHealth struct {
 
 func NewClient(cfg ClientConfig) *Client {
 	cli := &Client{
-		cfg:             cfg,
-		serverHealthMap: make(map[string]*ServerHealth),
+		cfg:                cfg,
+		serverHealthMap:    make(map[string]*ServerHealth),
+		serverFailureCount: make(map[string]int),
 	}
 	if cfg.CertFile != "" {
 		log.Printf("[cli] using cert file: %s", cfg.CertFile)
@@ -66,16 +71,20 @@ func (c *Client) Run() error {
 	}
 
 	// Periodically check the health status of servers
-	healthCheckTicker := time.NewTicker(5 * time.Second)
+	healthCheckTicker := time.NewTicker(time.Duration(c.cfg.CheckInterval) * time.Second)
 	defer healthCheckTicker.Stop()
 
 	// Ticker for displaying the count of healthy servers
-	statusTicker := time.NewTicker(10 * time.Second)
+	statusTicker := time.NewTicker(time.Duration(c.cfg.CheckInterval) * time.Second)
 	defer statusTicker.Stop()
 
 	// Ticker for prompting user to update configuration
 	updateConfigTicker := time.NewTicker(15 * time.Second)
 	defer updateConfigTicker.Stop()
+
+	// Ticker for attempting reconnection to down servers
+	reconnectTicker := time.NewTicker(time.Duration(c.cfg.ReconnectInterval) * time.Second)
+	defer reconnectTicker.Stop()
 
 	go func() {
 		for range statusTicker.C {
@@ -90,30 +99,39 @@ func (c *Client) Run() error {
 
 		case <-updateConfigTicker.C:
 			c.promptUpdateConfiguration()
+
+		case <-reconnectTicker.C:
+			c.reconnectDownServers()
 		}
 	}
 }
 
 func (c *Client) connectAndMonitor(serverAddr string) {
 	conn, err := quic.DialAddr(c.ctx, serverAddr, c.tls, nil)
+	c.mu.Lock()
 	if err != nil {
 		log.Printf("[cli] error dialing server %s: %v", serverAddr, err)
-		return
-	}
-	serverID := c.protocolHandler(conn)
-	if serverID == "" {
-		log.Printf("[cli] failed to get server ID for %s", serverAddr)
+		c.serverFailureCount[serverAddr]++
+		c.mu.Unlock()
 		return
 	}
 
-	c.mu.Lock()
+	serverID := c.protocolHandler(conn)
+	if serverID == "" {
+		log.Printf("[cli] failed to get server ID for %s", serverAddr)
+		c.serverFailureCount[serverAddr]++
+		c.mu.Unlock()
+		return
+	}
+
 	c.serverHealthMap[serverID] = &ServerHealth{
 		ServerID:        serverID,
 		IsHealthy:       true,
 		FailedAttempts:  0,
-		MaxFailAttempts: 3,
+		MaxFailAttempts: c.cfg.MaxFailAttempts,
 		conn:            conn,
 	}
+	delete(c.serverFailureCount, serverAddr)
 	c.mu.Unlock()
 }
 
@@ -140,7 +158,11 @@ func (c *Client) displayHealthStatus() {
 			healthyCount++
 		}
 	}
-	log.Printf("[cli] %d out of %d servers are healthy", healthyCount, len(c.serverHealthMap))
+	totalServers := len(c.cfg.ServerPorts)
+	log.Printf("[cli] %d out of %d servers are healthy", healthyCount, totalServers)
+	for serverAddr, failCount := range c.serverFailureCount {
+		log.Printf("[cli] Server %s failed to connect %d times", serverAddr, failCount)
+	}
 }
 
 func (c *Client) promptUpdateConfiguration() {
@@ -325,5 +347,15 @@ func (c *Client) markServerUnhealthy(serverID string) {
 			serverHealth.IsHealthy = false
 			log.Printf("[client] Server %s is down", serverID)
 		}
+	}
+}
+
+func (c *Client) reconnectDownServers() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for serverAddr, failCount := range c.serverFailureCount {
+		go c.connectAndMonitor(serverAddr)
+		log.Printf("[cli] Attempting to reconnect to server %s (failed %d times)", serverAddr, failCount)
 	}
 }

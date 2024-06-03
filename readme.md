@@ -1,60 +1,81 @@
 # Quick Health Check Protocol (QHCP) using QUIC
+
 This project implements a Quick Health Check Protocol (QHCP) using the QUIC transport protocol. The QHCP is designed to monitor the health of multiple backend servers and facilitate load balancing decisions. The solution consists of a load balancer and server components.
 
 ## Protocol Design
+
 The Quick Health Check Protocol (QHCP) is a stateful protocol that follows a specific Deterministic Finite Automaton (DFA) for its operation. Both the client (load balancer) and server must implement and validate the statefulness of the protocol according to the defined DFA.
 
-The protocol operates on a hardcoded port number chosen by the user, which is documented in the protocol design. The client defaults to this port number when connecting to the server.
+The protocol operates on port 4242 by default, which can be customized by the user. The client defaults to this port number when connecting to the server.
+
+## Functionality
+
+The QHCP implementation provides the following key functionalities:
+
+1. **Health Monitoring**: The load balancer periodically sends health check requests to the connected servers to assess their health status. The servers respond with their current health metrics, including CPU usage and memory usage percentages.
+
+2. **Load Balancing**: Based on the health status of the servers, the load balancer makes intelligent decisions to distribute the traffic among the healthy servers. It maintains a map of server health statuses and dynamically updates it based on the health check responses.
+
+3. **Fault Tolerance**: The load balancer is designed to handle server failures gracefully. It keeps track of the number of failed health check attempts for each server and marks a server as down if it exceeds a configurable threshold. Down servers are periodically retried for reconnection.
+
+4. **Secure Communication**: The QHCP implementation leverages the security features provided by QUIC. It supports TLS encryption for secure communication between the load balancer and servers. The TLS configuration can be customized using certificate and key files.
 
 ## Usage
-The project provides a single binary that can be used to run both the load balancer and the server(s). Configuration information for the client and server is provided via command line arguments.
+
+The project provides a user-friendly Bash script `run_quic.sh` that offers an interactive menu to run either the load balancer or the server(s). The script prompts the user for necessary configuration options such as server addresses, ports, and TLS settings. It initializes the Go module and runs the appropriate command based on the user's selections.
 
 ### Load Balancer
-To start the load balancer, use the following command:
-go run echo.go -loadbalancer 
--servers "server1:port,server2:port" 
--loadbalancer-port 4242 
--max-fail-attempts 3 
--check-interval 10 
--reconnect-interval 30 
--cert-file "path/to/cert/file"
-Copy code
-The load balancer accepts the following command line arguments:
-- `-servers`: Comma-separated list of server addresses in the format `host:port`.
-- `-loadbalancer-port`: Port number for the load balancer to listen on (default: 4242).
-- `-max-fail-attempts`: Maximum number of failed health check attempts before marking a server as down (default: 3).
-- `-check-interval`: Interval in seconds for performing health checks and displaying server status (default: 10).
-- `-reconnect-interval`: Interval in seconds for attempting to reconnect to down servers (default: 30).
-- `-cert-file`: Path to the TLS certificate file (optional).
 
-### Server
-To start a server, use the following command:
-go run echo.go -server 
--server-ip "0.0.0.0" 
--server-port 4243 
--key-file "path/to/key/file" 
--cert-file "path/to/cert/file"
-Copy code
-The server accepts the following command line arguments:
-- `-server-ip`: IP address for the server to listen on (default: "0.0.0.0").
-- `-server-port`: Port number for the server to listen on (default: 4243).
-- `-key-file`: Path to the TLS key file (optional).
-- `-cert-file`: Path to the TLS certificate file (optional).
+To create a load balancer, follow these steps:
+
+1. Run the `run_quic.sh` script:
+./run_quic.sh
+
+2. Select option "1. Run Load Balancer" from the menu.
+
+3. Provide the necessary configuration options when prompted:
+
+Enter the comma-separated list of server addresses (host:port) (e.g., localhost:4243,localhost:4244): localhost:4243,localhost:4244
+Enter the port for the load balancer (default: 4242): 4242
+Enter the maximum fail attempts before marking a server as down (default: 3): 3
+Enter the interval for health checks and status display in seconds (default: 10): 10
+Enter the interval for attempting to reconnect to down servers in seconds (default: 30): 30
+Enter the TLS certificate file (leave blank for default):
+
+In this example, the load balancer is configured to connect to two servers (`localhost:4243` and `localhost:4244`), listen on port 4242, use the default values for maximum fail attempts, health check interval, and reconnect interval, and use the default TLS certificate file.
+
+### Server(s)
+
+The `run_quic.sh` script allows you to start a single server or multiple servers. To create server(s), follow these steps:
+
+1. Run the `run_quic.sh` script:
+./run_quic.sh
+
+2. Select option "2. Run Server" from the menu.
+
+3. Provide the necessary configuration options when prompted:
+```
+Enter the server IP (default: 0.0.0.0): 0.0.0.0
+Enter the server port (default: 4243): 4243
+Enter the TLS key file (leave blank for default):
+Enter the TLS certificate file (leave blank for default):
+```
+In this example, a single server is started with the default IP address (`0.0.0.0`), listening on port 4243, and using the default TLS key and certificate files.
+
+To start multiple servers, repeat steps 1-3 and provide different port numbers for each server instance. For example:
+```
+Enter the server IP (default: 0.0.0.0): 0.0.0.0
+Enter the server port (default: 4243): 4244
+Enter the TLS key file (leave blank for default):
+Enter the TLS certificate file (leave blank for default):
+```
+This will start another server instance listening on port 4244.
+
+By following these steps and providing the desired configuration options, you can create a load balancer and server(s) using the `run_quic.sh` script. The script allows you to easily start a single server or multiple servers, depending on your requirements.
+
+Remember to adjust the configuration options based on your specific setup and needs. The provided examples demonstrate the flexibility and ease of use of the `run_quic.sh` script for creating load balancers and servers.
 
 ## Customization and Extensibility
-The project provides a workable prototype implementation of the Quick Health Check Protocol using QUIC. It can be customized and extended based on specific requirements. The code serves as a foundation for implementing a health check protocol and can be modified to include additional features, metrics, or customizations as needed.
 
-## Concurrency and Asynchronous Server (Extra Credit)
-The current server implementation does not support concurrent handling of multiple clients. As an extra credit feature, the server can be enhanced to handle multiple clients concurrently using a process/thread/coroutine model. This allows the server to efficiently serve multiple clients simultaneously.
+The QHCP implementation serves as a solid foundation for building a health check and load balancing system. It can be easily customized and extended to incorporate additional features and requirements. The modular design of the codebase allows for seamless integration of new health metrics, load balancing algorithms, and configuration options.
 
-## Dependencies
-The project relies on the following dependencies:
-- `github.com/quic-go/quic-go`: QUIC transport protocol implementation for Go.
-- `github.com/shirou/gopsutil`: Library for retrieving system information and metrics.
-
-Make sure to install the dependencies before running the project.
-
-## Limitations and Considerations
-- The project assumes a simple authentication mechanism using JSON Web Tokens (JWT). In a production environment, a more robust authentication and authorization system should be considered.
-- The code provided is a prototype and may require further optimizations, error handling, and testing before deployment in a production environment.
-- The project focuses on the core functionality of the health check protocol and does not includ

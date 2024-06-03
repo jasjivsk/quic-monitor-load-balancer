@@ -2,12 +2,6 @@
 
 This project implements a Quick Health Check Protocol (QHCP) using the QUIC transport protocol. The QHCP is designed to monitor the health of multiple backend servers and facilitate load balancing decisions. The solution consists of a load balancer and server components.
 
-## Protocol Design
-
-The Quick Health Check Protocol (QHCP) is a stateful protocol that follows a specific Deterministic Finite Automaton (DFA) for its operation. Both the client (load balancer) and server must implement and validate the statefulness of the protocol according to the defined DFA.
-
-The protocol operates on port 4242 by default, which can be customized by the user. The client defaults to this port number when connecting to the server.
-
 ## Functionality
 
 The QHCP implementation provides the following key functionalities:

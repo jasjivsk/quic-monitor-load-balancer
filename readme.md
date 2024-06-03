@@ -12,13 +12,12 @@ The protocol operates on port 4242 by default, which can be customized by the us
 
 The QHCP implementation provides the following key functionalities:
 
-1. **Health Monitoring**: The load balancer periodically sends health check requests to the connected servers to assess their health status. The servers respond with their current health metrics, including CPU usage and memory usage percentages.
-
-2. **Load Balancing**: Based on the health status of the servers, the load balancer makes intelligent decisions to distribute the traffic among the healthy servers. It maintains a map of server health statuses and dynamically updates it based on the health check responses.
-
-3. **Fault Tolerance**: The load balancer is designed to handle server failures gracefully. It keeps track of the number of failed health check attempts for each server and marks a server as down if it exceeds a configurable threshold. Down servers are periodically retried for reconnection.
-
-4. **Secure Communication**: The QHCP implementation leverages the security features provided by QUIC. It supports TLS encryption for secure communication between the load balancer and servers. The TLS configuration can be customized using certificate and key files.
+1. **Health Monitoring**: The load balancer periodically sends health check requests to the backend servers and monitors their health status based on the responses.
+2. **Server Reconnection**: If a server goes down, the load balancer attempts to reconnect to the server at regular intervals defined by the reconnect interval.
+3. **Metrics Collection**: The server collects and sends back health metrics such as CPU usage percentage and memory usage percentage to the load balancer.
+4. **Authentication**: The protocol incorporates JSON Web Tokens (JWT) for authentication between the load balancer and servers.
+Protocol Messaging: The protocol defines various message types for communication between the load balancer and servers, including HELLO, ACK, HEALTH_REQUEST, HEALTH_RESPONSE, CONFIG_UPDATE, CONFIG_ACK, ERROR, TERMINATE, and TERMINATE_ACK.
+5. **Secure Communication**: The protocol utilizes QUIC's built-in encryption for secure data transmission between the load balancer and servers.
 
 ## Usage
 
@@ -35,13 +34,14 @@ To create a load balancer, follow these steps:
 
 3. Provide the necessary configuration options when prompted:
 
+```
 Enter the comma-separated list of server addresses (host:port) (e.g., localhost:4243,localhost:4244): localhost:4243,localhost:4244
 Enter the port for the load balancer (default: 4242): 4242
 Enter the maximum fail attempts before marking a server as down (default: 3): 3
 Enter the interval for health checks and status display in seconds (default: 10): 10
 Enter the interval for attempting to reconnect to down servers in seconds (default: 30): 30
 Enter the TLS certificate file (leave blank for default):
-
+```
 In this example, the load balancer is configured to connect to two servers (`localhost:4243` and `localhost:4244`), listen on port 4242, use the default values for maximum fail attempts, health check interval, and reconnect interval, and use the default TLS certificate file.
 
 ### Server(s)

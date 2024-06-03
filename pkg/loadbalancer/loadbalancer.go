@@ -102,30 +102,60 @@ func (lb *LoadBalancer) Run() {
 
 // connectAndMonitor connects to a server and starts monitoring its health.
 func (lb *LoadBalancer) connectAndMonitor(serverAddr string) {
-	conn, err := quic.DialAddr(lb.ctx, serverAddr, lb.tls, nil)
-	lb.mu.Lock()
-	defer lb.mu.Unlock()
-	if err != nil {
-		log.Printf("[loadbalancer] error dialing server %s: %v", serverAddr, err)
-		lb.serverFailureCount[serverAddr]++
-		return
-	}
+	for {
+		conn, err := quic.DialAddr(lb.ctx, serverAddr, lb.tls, nil)
+		lb.mu.Lock()
+		if err != nil {
+			log.Printf("[loadbalancer] error dialing server %s: %v", serverAddr, err)
+			lb.serverFailureCount[serverAddr]++
+			lb.mu.Unlock()
+			time.Sleep(time.Duration(lb.cfg.ReconnectInterval) * time.Second)
+			continue
+		}
 
-	serverID := lb.protocolHandler(conn)
-	if serverID == "" {
-		log.Printf("[loadbalancer] failed to get server ID for %s", serverAddr)
-		lb.serverFailureCount[serverAddr]++
-		return
-	}
+		serverID := lb.protocolHandler(conn)
+		if serverID == "" {
+			log.Printf("[loadbalancer] failed to get server ID for %s", serverAddr)
+			lb.serverFailureCount[serverAddr]++
+			lb.mu.Unlock()
+			time.Sleep(time.Duration(lb.cfg.ReconnectInterval) * time.Second)
+			continue
+		}
 
-	lb.serverHealthMap[serverID] = &ServerHealth{
-		ServerID:        serverID,
-		IsHealthy:       true,
-		FailedAttempts:  0,
-		MaxFailAttempts: lb.cfg.MaxFailAttempts,
-		conn:            conn,
+		lb.serverHealthMap[serverID] = &ServerHealth{
+			ServerID:        serverID,
+			IsHealthy:       true,
+			FailedAttempts:  0,
+			MaxFailAttempts: lb.cfg.MaxFailAttempts,
+			conn:            conn,
+		}
+		delete(lb.serverFailureCount, serverAddr)
+		lb.mu.Unlock()
+
+		// Monitor the server connection
+		lb.monitorServer(serverID)
 	}
-	delete(lb.serverFailureCount, serverAddr)
+}
+
+// monitorServer monitors the health of a server and handles disconnection.
+func (lb *LoadBalancer) monitorServer(serverID string) {
+	for {
+		lb.mu.Lock()
+		health, ok := lb.serverHealthMap[serverID]
+		lb.mu.Unlock()
+		if !ok {
+			// Server has been removed from the health map
+			return
+		}
+
+		if !health.IsHealthy {
+			// Server is marked as unhealthy, close the connection
+			health.conn.CloseWithError(0, "server unhealthy")
+			return
+		}
+
+		time.Sleep(time.Second)
+	}
 }
 
 // performHealthCheck performs health checks on all servers.
@@ -303,8 +333,35 @@ func (lb *LoadBalancer) markServerUnhealthy(serverID string) {
 func (lb *LoadBalancer) reconnectDownServers() {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
+
 	for serverAddr, failCount := range lb.serverFailureCount {
 		log.Printf("[loadbalancer] Attempting to reconnect to server %s (failed %d times)", serverAddr, failCount)
-		go lb.connectAndMonitor(serverAddr)
+
+		// Attempt to reconnect to the server
+		conn, err := quic.DialAddr(lb.ctx, serverAddr, lb.tls, nil)
+		if err != nil {
+			log.Printf("[loadbalancer] Failed to reconnect to server %s: %v", serverAddr, err)
+			continue
+		}
+
+		serverID := lb.protocolHandler(conn)
+		if serverID == "" {
+			log.Printf("[loadbalancer] Failed to get server ID for %s", serverAddr)
+			continue
+		}
+
+		// Update the server health map with the new connection
+		lb.serverHealthMap[serverID] = &ServerHealth{
+			ServerID:        serverID,
+			IsHealthy:       true,
+			FailedAttempts:  0,
+			MaxFailAttempts: lb.cfg.MaxFailAttempts,
+			conn:            conn,
+		}
+
+		// Remove the server from the failure count map
+		delete(lb.serverFailureCount, serverAddr)
+
+		log.Printf("[loadbalancer] Successfully reconnected to server %s", serverAddr)
 	}
 }

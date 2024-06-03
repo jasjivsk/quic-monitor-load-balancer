@@ -10,7 +10,6 @@ require (
 
 require (
 	github.com/go-ole/go-ole v1.3.0 // indirect
-	github.com/go-task/slim-sprig v0.0.0-20230315185526-52ccab3ef572 // indirect
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
 	github.com/google/pprof v0.0.0-20240528025155-186aa0362fba // indirect
 	github.com/onsi/ginkgo/v2 v2.19.0 // indirect

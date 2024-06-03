@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"fmt"
 	"log"
 	"strings"
 	"sync"
@@ -15,6 +14,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
+// LoadBalancerConfig represents the configuration for the load balancer.
 type LoadBalancerConfig struct {
 	Servers           []string
 	CertFile          string
@@ -24,6 +24,7 @@ type LoadBalancerConfig struct {
 	Port              int
 }
 
+// LoadBalancer represents the load balancer.
 type LoadBalancer struct {
 	cfg                LoadBalancerConfig
 	tls                *tls.Config
@@ -33,6 +34,7 @@ type LoadBalancer struct {
 	mu                 sync.Mutex
 }
 
+// ServerHealth represents the health status of a server.
 type ServerHealth struct {
 	ServerID        string
 	IsHealthy       bool
@@ -41,6 +43,7 @@ type ServerHealth struct {
 	conn            quic.Connection
 }
 
+// NewLoadBalancer creates a new load balancer with the given configuration.
 func NewLoadBalancer(cfg LoadBalancerConfig) *LoadBalancer {
 	lb := &LoadBalancer{
 		cfg:                cfg,
@@ -52,7 +55,6 @@ func NewLoadBalancer(cfg LoadBalancerConfig) *LoadBalancer {
 		t, err := util.BuildTLSClientConfigWithCert(cfg.CertFile)
 		if err != nil {
 			log.Fatal("[loadbalancer] error building TLS client config:", err)
-			return nil
 		}
 		lb.tls = t
 	} else {
@@ -62,7 +64,8 @@ func NewLoadBalancer(cfg LoadBalancerConfig) *LoadBalancer {
 	return lb
 }
 
-func (lb *LoadBalancer) Run() error {
+// Run starts the load balancer.
+func (lb *LoadBalancer) Run() {
 	// Connect to each server and start health check
 	for _, serverAddr := range lb.cfg.Servers {
 		go lb.connectAndMonitor(serverAddr)
@@ -75,10 +78,6 @@ func (lb *LoadBalancer) Run() error {
 	// Ticker for displaying the count of healthy servers
 	statusTicker := time.NewTicker(time.Duration(lb.cfg.CheckInterval) * time.Second)
 	defer statusTicker.Stop()
-
-	// Ticker for prompting user to update configuration
-	updateConfigTicker := time.NewTicker(15 * time.Second)
-	defer updateConfigTicker.Stop()
 
 	// Ticker for attempting reconnection to down servers
 	reconnectTicker := time.NewTicker(time.Duration(lb.cfg.ReconnectInterval) * time.Second)
@@ -97,13 +96,11 @@ func (lb *LoadBalancer) Run() error {
 
 		case <-reconnectTicker.C:
 			lb.reconnectDownServers()
-
-			// case <-updateConfigTicker.C:
-			// 	lb.promptUpdateConfiguration()
 		}
 	}
 }
 
+// connectAndMonitor connects to a server and starts monitoring its health.
 func (lb *LoadBalancer) connectAndMonitor(serverAddr string) {
 	conn, err := quic.DialAddr(lb.ctx, serverAddr, lb.tls, nil)
 	lb.mu.Lock()
@@ -131,6 +128,7 @@ func (lb *LoadBalancer) connectAndMonitor(serverAddr string) {
 	delete(lb.serverFailureCount, serverAddr)
 }
 
+// performHealthCheck performs health checks on all servers.
 func (lb *LoadBalancer) performHealthCheck() {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
@@ -145,6 +143,7 @@ func (lb *LoadBalancer) performHealthCheck() {
 	}
 }
 
+// displayHealthStatus displays the health status of all servers.
 func (lb *LoadBalancer) displayHealthStatus() {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
@@ -162,58 +161,11 @@ func (lb *LoadBalancer) displayHealthStatus() {
 	}
 }
 
-func (lb *LoadBalancer) promptUpdateConfiguration() {
-	var updateConfig string
-	log.Print("Do you want to update the configuration? (y/n): ")
-	fmt.Scanln(&updateConfig)
-	if strings.ToLower(updateConfig) == "y" {
-		lb.updateConfiguration()
-	}
-}
-
-func (lb *LoadBalancer) updateConfiguration() {
-	var metrics string
-	var interval int
-	log.Print("Enter the new metrics (comma-separated): ")
-	fmt.Scanln(&metrics)
-	log.Print("Enter the new check interval (in seconds): ")
-	fmt.Scanln(&interval)
-	newMetrics := strings.Split(metrics, ",")
-	configUpdateData := map[string]interface{}{
-		"new_metrics":        newMetrics,
-		"new_check_interval": interval,
-	}
-	configUpdateBytes, _ := json.Marshal(configUpdateData)
-	configUpdatePdu := pdu.PDU{
-		Mtype:  pdu.TYPE_CONFIG_UPDATE,
-		Length: uint16(len(configUpdateBytes)),
-		Data:   configUpdateBytes,
-	}
-	configUpdatePduBytes, _ := pdu.PduToBytes(&configUpdatePdu)
-
-	lb.mu.Lock()
-	defer lb.mu.Unlock()
-	for serverID, health := range lb.serverHealthMap {
-		if health.IsHealthy {
-			stream, err := health.conn.OpenStreamSync(lb.ctx)
-			if err != nil {
-				log.Printf("[loadbalancer] Error opening stream for server %s: %v", serverID, err)
-				continue
-			}
-			_, err = stream.Write(configUpdatePduBytes)
-			if err != nil {
-				log.Printf("[loadbalancer] Error sending CONFIG_UPDATE to server %s: %v", serverID, err)
-				continue
-			}
-			log.Printf("[loadbalancer] Sent CONFIG_UPDATE to server %s", serverID)
-		}
-	}
-}
-
+// protocolHandler handles the protocol communication with a server.
 func (lb *LoadBalancer) protocolHandler(conn quic.Connection) string {
 	stream, err := conn.OpenStreamSync(lb.ctx)
 	if err != nil {
-		log.Printf("[loadbalancer] error opening stream %s", err)
+		log.Printf("[loadbalancer] error opening stream: %s", err)
 		return ""
 	}
 	// Send HELLO PDU
@@ -230,22 +182,21 @@ func (lb *LoadBalancer) protocolHandler(conn quic.Connection) string {
 		Data:   helloBytes,
 	}
 	pduBytes, _ := pdu.PduToBytes(&helloPdu)
-	n, err := stream.Write(pduBytes)
+	_, err = stream.Write(pduBytes)
 	if err != nil {
-		log.Printf("[loadbalancer] error writing to stream %s", err)
+		log.Printf("[loadbalancer] error writing to stream: %s", err)
 		return ""
 	}
-	//log.Printf("[loadbalancer] wrote %d bytes to stream", n)
 	// Read the ACK message from the server
 	ackBuffer := pdu.MakePduBuffer()
-	n, err = stream.Read(ackBuffer)
+	n, err := stream.Read(ackBuffer)
 	if err != nil {
 		log.Printf("[loadbalancer] Error reading ACK from stream: %v", err)
 		return ""
 	}
 	ackPdu, err := pdu.PduFromBytes(ackBuffer[:n])
 	if err != nil {
-		log.Printf("[loadbalancer] Error converting ACK pdu from bytes %s", err)
+		log.Printf("[loadbalancer] Error converting ACK pdu from bytes: %s", err)
 		return ""
 	}
 	log.Printf("[loadbalancer] Got ACK response: %s", ackPdu.ToJsonString())
@@ -261,6 +212,7 @@ func (lb *LoadBalancer) protocolHandler(conn quic.Connection) string {
 	return ackData.ServerID
 }
 
+// sendHealthChecks sends periodic health check requests to a server.
 func (lb *LoadBalancer) sendHealthChecks(conn quic.Connection, serverID string, stream quic.Stream, checkInterval int) {
 	ticker := time.NewTicker(time.Duration(checkInterval) * time.Second)
 	defer ticker.Stop()
@@ -285,14 +237,12 @@ func (lb *LoadBalancer) sendHealthChecks(conn quic.Connection, serverID string, 
 			continue
 		}
 
-		//log.Printf("[loadbalancer] Received PDU bytes from server %s: %v", serverID, buffer[:n])
 		rsp, err := pdu.PduFromBytes(buffer[:n])
 		if err != nil {
 			log.Printf("[loadbalancer] Error converting pdu from bytes for server %s: %s", serverID, err)
 			continue
 		}
 		rspDataString := string(rsp.Data)
-		//log.Printf("[loadbalancer] Got response from server %s: %s", serverID, rsp.ToJsonString())
 		log.Printf("[loadbalancer] Decoded string from server %s: %s", serverID, rspDataString)
 		switch rsp.Mtype {
 		case pdu.TYPE_HEALTH_RESPONSE:
@@ -323,6 +273,7 @@ func (lb *LoadBalancer) sendHealthChecks(conn quic.Connection, serverID string, 
 	}
 }
 
+// markServerHealthy marks a server as healthy.
 func (lb *LoadBalancer) markServerHealthy(serverID string) {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
@@ -333,6 +284,7 @@ func (lb *LoadBalancer) markServerHealthy(serverID string) {
 	}
 }
 
+// markServerUnhealthy marks a server as unhealthy.
 func (lb *LoadBalancer) markServerUnhealthy(serverID string) {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
@@ -347,6 +299,7 @@ func (lb *LoadBalancer) markServerUnhealthy(serverID string) {
 	}
 }
 
+// reconnectDownServers attempts to reconnect to down servers.
 func (lb *LoadBalancer) reconnectDownServers() {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()

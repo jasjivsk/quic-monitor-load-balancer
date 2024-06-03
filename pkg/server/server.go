@@ -1,3 +1,4 @@
+// server.go
 package server
 
 import (
@@ -15,6 +16,7 @@ import (
 	"github.com/shirou/gopsutil/mem"
 )
 
+// ServerConfig represents the configuration for the server.
 type ServerConfig struct {
 	GenTLS   bool
 	CertFile string
@@ -23,12 +25,14 @@ type ServerConfig struct {
 	Port     int
 }
 
+// Server represents the server.
 type Server struct {
 	cfg ServerConfig
 	tls *tls.Config
 	ctx context.Context
 }
 
+// NewServer creates a new server with the given configuration.
 func NewServer(cfg ServerConfig) *Server {
 	server := &Server{
 		cfg: cfg,
@@ -38,6 +42,7 @@ func NewServer(cfg ServerConfig) *Server {
 	return server
 }
 
+// getTLS returns the TLS configuration for the server.
 func (s *Server) getTLS() *tls.Config {
 	if s.cfg.GenTLS {
 		tlsConfig, err := util.GenerateTLSConfig()
@@ -53,6 +58,8 @@ func (s *Server) getTLS() *tls.Config {
 		return tlsConfig
 	}
 }
+
+// Run starts the server.
 func (s *Server) Run() error {
 	address := fmt.Sprintf("%s:%d", s.cfg.Address, s.cfg.Port)
 	listener, err := quic.ListenAddr(address, s.tls, nil)
@@ -61,9 +68,9 @@ func (s *Server) Run() error {
 		return err
 	}
 	log.Printf("[server] Listening on %s", address)
-	//SERVER LOOP
+	// SERVER LOOP
 	for {
-		log.Println("[server] Waiting for loadbalancer to connect..")
+		log.Println("[server] Waiting for loadbalancer to connect...")
 		sess, err := listener.Accept(s.ctx)
 		if err != nil {
 			log.Printf("error accepting: %s", err)
@@ -73,6 +80,8 @@ func (s *Server) Run() error {
 		go s.streamHandler(sess)
 	}
 }
+
+// streamHandler handles incoming streams from the load balancer.
 func (s *Server) streamHandler(sess quic.Connection) {
 	for {
 		log.Print("[server] waiting for client to open stream")
@@ -81,12 +90,14 @@ func (s *Server) streamHandler(sess quic.Connection) {
 			log.Printf("[server] stream closed: %s", err)
 			break
 		}
-		//Handle protocol activity on stream
+		// Handle protocol activity on stream
 		s.protocolHandler(stream)
 	}
 }
+
+// protocolHandler handles the protocol communication with the load balancer.
 func (s *Server) protocolHandler(stream quic.Stream) error {
-	//THIS IS WHERE YOU START HANDLING YOUR APP PROTOCOL
+	// THIS IS WHERE YOU START HANDLING YOUR APP PROTOCOL
 	buff := pdu.MakePduBuffer()
 	for {
 		n, err := stream.Read(buff)
@@ -94,7 +105,6 @@ func (s *Server) protocolHandler(stream quic.Stream) error {
 			log.Printf("[server] Error Reading Raw Data: %s", err)
 			return err
 		}
-
 		data, err := pdu.PduFromBytes(buff[:n])
 		if err != nil {
 			log.Printf("[server] Error decoding PDU: %s", err)
@@ -206,6 +216,8 @@ func (s *Server) protocolHandler(stream quic.Stream) error {
 		}
 	}
 }
+
+// getHealthData retrieves the current health metrics of the server.
 func (s *Server) getHealthData() []byte {
 	// Get the current CPU usage percentage
 	cpuPercent, err := cpu.Percent(0, false)
@@ -220,7 +232,6 @@ func (s *Server) getHealthData() []byte {
 		memStat = &mem.VirtualMemoryStat{}
 	}
 	memPercent := memStat.UsedPercent
-
 	healthData := map[string]interface{}{
 		"timestamp": time.Now().Format(time.RFC3339),
 		"metrics": map[string]float64{
@@ -231,6 +242,8 @@ func (s *Server) getHealthData() []byte {
 	jsonData, _ := json.Marshal(healthData)
 	return jsonData
 }
+
+// updateHealthCheckConfig updates the health check configuration with the new metrics and interval.
 func (s *Server) updateHealthCheckConfig(newMetrics []string, newCheckInterval int) {
 	// Update health check configuration with the new metrics and interval
 	log.Printf("[server] Updated health check configuration: metrics=%v, interval=%d", newMetrics, newCheckInterval)
